@@ -1,4 +1,5 @@
 import hashlib
+import json
 from pathlib import Path
 
 
@@ -39,6 +40,27 @@ def scan_directory(directory):
 def create_baseline(directory):
     """Create a file-integrity baseline for a directory."""
     return scan_directory(directory)
+
+
+def save_baseline(baseline, baseline_file):
+    """Save a file-integrity baseline as JSON."""
+    baseline_path = Path(baseline_file)
+
+    with open(baseline_path, "w", encoding="utf-8") as file:
+        json.dump(
+            baseline,
+            file,
+            indent=2,
+            sort_keys=True,
+        )
+
+
+def load_baseline(baseline_file):
+    """Load a file-integrity baseline from a JSON file."""
+    baseline_path = Path(baseline_file)
+
+    with open(baseline_path, "r", encoding="utf-8") as file:
+        return json.load(file)
 
 
 def compare_baseline(baseline, directory):
