@@ -132,7 +132,7 @@ def build_parser():
 
 def run_analyze(args):
     try:
-        with open(args.logfile, "r", encoding="utf-8") as file:
+        with open(args.logfile, encoding="utf-8") as file:
             log_lines = file.readlines()
 
     except OSError as exc:
