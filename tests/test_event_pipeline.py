@@ -1,5 +1,5 @@
-from src.nightfall.event_pipeline import process_logs
 from src.nightfall.config import NightfallConfig
+from src.nightfall.event_pipeline import process_logs
 
 
 def test_event_pipeline_detects_brute_force():
