@@ -1,37 +1,46 @@
 from .alert_engine import build_alerts
+from .config import NightfallConfig
 from .incident_response import process_alert
 from .log_analyzer import analyze_logs
 from .security_event import SecurityEvent
 from .threat_detection import detect_brute_force
 
 
-def process_logs(log_lines, threshold=5):
+def process_logs(log_lines, config=None, threshold=None):
     """
-    Process raw authentication logs through the NIGHTFALL
-    defensive detection pipeline.
+    Process raw authentication logs through the complete
+    NIGHTFALL defensive security pipeline.
 
     Pipeline:
         logs
-        -> log analysis
+        -> analysis
         -> threat detection
-        -> alert generation
+        -> alerts
         -> incident response
-        -> standardized security events
+        -> security events
+
+    A NightfallConfig object can be supplied to centralize
+    security settings.
     """
 
-    # Step 1: Analyze raw logs
+    if config is None:
+        config = NightfallConfig()
+
+    if not isinstance(config, NightfallConfig):
+        raise TypeError("config must be a NightfallConfig instance")
+
+    if threshold is None:
+        threshold = config.brute_force_threshold
+
     analysis = analyze_logs(log_lines)
 
-    # Step 2: Detect threats
     detections = detect_brute_force(
         analysis["failed_sources"],
         threshold=threshold,
     )
 
-    # Step 3: Build security alerts
     alerts = build_alerts(detections)
 
-    # Step 4: Convert alerts into standardized security events
     events = []
 
     for alert in alerts:
