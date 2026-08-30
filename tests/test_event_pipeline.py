@@ -1,4 +1,5 @@
 from src.nightfall.event_pipeline import process_logs
+from src.nightfall.config import NightfallConfig
 
 
 def test_event_pipeline_detects_brute_force():
@@ -69,7 +70,6 @@ def test_event_pipeline_ignores_successful_logins():
     assert result["detections"] == []
     assert result["alerts"] == []
     assert result["events"] == []
-    from src.nightfall.config import NightfallConfig
 
 
 def test_event_pipeline_uses_configuration_threshold():
