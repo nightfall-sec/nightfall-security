@@ -3,10 +3,10 @@ import json
 import pytest
 
 from src.nightfall.file_integrity import (
-    create_baseline,
     compare_baseline,
-    save_baseline,
+    create_baseline,
     load_baseline,
+    save_baseline,
 )
 
 
@@ -41,7 +41,7 @@ def test_saved_baseline_is_valid_json(tmp_path):
 
     save_baseline(baseline, baseline_file)
 
-    with open(baseline_file, "r", encoding="utf-8") as file:
+    with open(baseline_file, encoding="utf-8") as file:
         data = json.load(file)
 
     assert isinstance(data, dict)
