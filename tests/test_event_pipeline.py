@@ -69,3 +69,27 @@ def test_event_pipeline_ignores_successful_logins():
     assert result["detections"] == []
     assert result["alerts"] == []
     assert result["events"] == []
+    from src.nightfall.config import NightfallConfig
+
+
+def test_event_pipeline_uses_configuration_threshold():
+    logs = [
+        "Failed password for user admin from 192.168.1.10",
+        "Failed password for user root from 192.168.1.10",
+        "Failed password for user test from 192.168.1.10",
+        "Failed password for user guest from 192.168.1.10",
+    ]
+
+    config = NightfallConfig(
+        brute_force_threshold=4,
+    )
+
+    result = process_logs(
+        logs,
+        config=config,
+    )
+
+    assert result["analysis"]["failed_attempts"] == 4
+    assert len(result["detections"]) == 1
+    assert result["detections"][0]["ip"] == "192.168.1.10"
+    assert result["detections"][0]["failed_attempts"] == 4
