@@ -4,6 +4,7 @@ import sys
 
 from .config import NightfallConfig
 from .event_pipeline import process_logs
+from .file_integrity import scan_directory
 from .reporting import build_report
 
 
@@ -38,6 +39,22 @@ def build_parser():
         "--json",
         action="store_true",
         help="Output the security report as JSON.",
+    )
+
+    integrity_parser = subparsers.add_parser(
+        "integrity",
+        help="Scan a directory and calculate SHA-256 hashes.",
+    )
+
+    integrity_parser.add_argument(
+        "directory",
+        help="Directory to scan.",
+    )
+
+    integrity_parser.add_argument(
+        "--json",
+        action="store_true",
+        help="Output the integrity results as JSON.",
     )
 
     return parser
@@ -93,12 +110,50 @@ def run_analyze(args):
     return 0
 
 
+def run_integrity(args):
+    try:
+        hashes = scan_directory(args.directory)
+    except (OSError, NotADirectoryError) as exc:
+        print(
+            f"Error: unable to scan directory: {exc}",
+            file=sys.stderr,
+        )
+        return 1
+
+    if args.json:
+        print(
+            json.dumps(
+                {
+                    "directory": args.directory,
+                    "files": hashes,
+                    "file_count": len(hashes),
+                },
+                indent=2,
+                ensure_ascii=False,
+            )
+        )
+        return 0
+
+    print("NIGHTFALL File Integrity Scan")
+    print("=" * 30)
+    print(f"Directory: {args.directory}")
+    print(f"Files scanned: {len(hashes)}")
+
+    for path, file_hash in hashes.items():
+        print(f"{path}: {file_hash}")
+
+    return 0
+
+
 def main(argv=None):
     parser = build_parser()
     args = parser.parse_args(argv)
 
     if args.command == "analyze":
         return run_analyze(args)
+
+    if args.command == "integrity":
+        return run_integrity(args)
 
     parser.print_help()
     return 0
