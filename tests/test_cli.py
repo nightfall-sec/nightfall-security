@@ -54,6 +54,37 @@ def test_cli_parser_json_option():
     assert args.json is True
 
 
+def test_cli_parser_integrity():
+    parser = build_parser()
+
+    args = parser.parse_args(
+        [
+            "integrity",
+            "/tmp/test-directory",
+        ]
+    )
+
+    assert args.command == "integrity"
+    assert args.directory == "/tmp/test-directory"
+    assert args.json is False
+
+
+def test_cli_parser_integrity_json():
+    parser = build_parser()
+
+    args = parser.parse_args(
+        [
+            "integrity",
+            "/tmp/test-directory",
+            "--json",
+        ]
+    )
+
+    assert args.command == "integrity"
+    assert args.directory == "/tmp/test-directory"
+    assert args.json is True
+
+
 def test_cli_analyze_success(tmp_path, capsys):
     logfile = Path(tmp_path) / "auth.log"
 
@@ -158,3 +189,103 @@ def test_cli_analyze_json_output(tmp_path, capsys):
     assert report["events"][0]["event_type"] == "BRUTE_FORCE"
     assert report["events"][0]["severity"] == "HIGH"
     assert report["events"][0]["source_ip"] == "192.168.1.10"
+
+
+def test_cli_integrity_success(tmp_path, capsys):
+    test_file = tmp_path / "important.txt"
+
+    test_file.write_text(
+        "NIGHTFALL",
+        encoding="utf-8",
+    )
+
+    exit_code = main(
+        [
+            "integrity",
+            str(tmp_path),
+        ]
+    )
+
+    captured = capsys.readouterr()
+
+    assert exit_code == 0
+    assert "NIGHTFALL File Integrity Scan" in captured.out
+    assert f"Directory: {tmp_path}" in captured.out
+    assert "Files scanned: 1" in captured.out
+    assert "important.txt:" in captured.out
+    assert len(captured.out.split("important.txt:")[1].strip()) >= 64
+
+
+def test_cli_integrity_json_output(tmp_path, capsys):
+    test_file = tmp_path / "important.txt"
+
+    test_file.write_text(
+        "NIGHTFALL",
+        encoding="utf-8",
+    )
+
+    exit_code = main(
+        [
+            "integrity",
+            str(tmp_path),
+            "--json",
+        ]
+    )
+
+    captured = capsys.readouterr()
+
+    assert exit_code == 0
+
+    result = json.loads(captured.out)
+
+    assert result["directory"] == str(tmp_path)
+    assert result["file_count"] == 1
+    assert "important.txt" in result["files"]
+
+    file_hash = result["files"]["important.txt"]
+
+    assert isinstance(file_hash, str)
+    assert len(file_hash) == 64
+
+
+def test_cli_integrity_multiple_files(tmp_path, capsys):
+    first_file = tmp_path / "first.txt"
+    second_file = tmp_path / "second.txt"
+
+    first_file.write_text(
+        "FIRST",
+        encoding="utf-8",
+    )
+
+    second_file.write_text(
+        "SECOND",
+        encoding="utf-8",
+    )
+
+    exit_code = main(
+        [
+            "integrity",
+            str(tmp_path),
+        ]
+    )
+
+    captured = capsys.readouterr()
+
+    assert exit_code == 0
+    assert "Files scanned: 2" in captured.out
+    assert "first.txt:" in captured.out
+    assert "second.txt:" in captured.out
+
+
+def test_cli_integrity_missing_directory(capsys):
+    exit_code = main(
+        [
+            "integrity",
+            "missing-directory",
+        ]
+    )
+
+    captured = capsys.readouterr()
+
+    assert exit_code == 1
+    assert "Error: unable to scan directory" in captured.err
