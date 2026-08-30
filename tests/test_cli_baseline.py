@@ -105,7 +105,7 @@ def test_cli_baseline_creates_file(tmp_path, capsys):
     assert "NIGHTFALL Baseline Created" in captured.out
     assert "Files recorded: 1" in captured.out
 
-    with open(baseline_file, "r", encoding="utf-8") as file:
+    with open(baseline_file, encoding="utf-8") as file:
         baseline = json.load(file)
 
     assert "important.txt" in baseline
