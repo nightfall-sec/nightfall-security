@@ -59,7 +59,7 @@ def load_baseline(baseline_file):
     """Load a file-integrity baseline from a JSON file."""
     baseline_path = Path(baseline_file)
 
-    with open(baseline_path, "r", encoding="utf-8") as file:
+    with open(baseline_path, encoding="utf-8") as file:
         return json.load(file)
 
 
