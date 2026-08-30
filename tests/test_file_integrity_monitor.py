@@ -8,9 +8,6 @@ from src.nightfall.file_integrity import (
 
 
 def test_unchanged_file(tmp_path):
-
-
-def test_unchanged_file(tmp_path):
     test_file = tmp_path / "important.txt"
     test_file.write_text("NIGHTFALL")
 
@@ -63,3 +60,28 @@ def test_new_file(tmp_path):
     result = compare_baseline(baseline, tmp_path)
 
     assert result["new"] == ["new_file.txt"]
+
+
+def test_save_and_load_baseline(tmp_path):
+    test_file = tmp_path / "important.txt"
+    test_file.write_text("NIGHTFALL")
+
+    baseline = create_baseline(tmp_path)
+
+    baseline_file = tmp_path / "baseline.json"
+
+    save_baseline(baseline, baseline_file)
+
+    loaded_baseline = load_baseline(baseline_file)
+
+    assert loaded_baseline == baseline
+
+
+def test_scan_directory(tmp_path):
+    test_file = tmp_path / "important.txt"
+    test_file.write_text("NIGHTFALL")
+
+    result = scan_directory(tmp_path)
+
+    assert "important.txt" in result
+    assert len(result) == 1
