@@ -52,6 +52,25 @@ def test_security_event_to_dict():
     assert result["source_ip"] == "10.0.0.5"
     assert result["metadata"]["failed_attempts"] == 10
     assert "timestamp" in result
+    assert "event_id" in result
+
+
+def test_security_event_has_unique_event_id():
+    event_one = SecurityEvent(
+        event_type="login_failure",
+        severity="medium",
+    )
+
+    event_two = SecurityEvent(
+        event_type="login_failure",
+        severity="medium",
+    )
+
+    assert event_one.event_id
+    assert event_two.event_id
+    assert event_one.event_id != event_two.event_id
+    assert len(event_one.event_id) == 32
+    assert len(event_two.event_id) == 32
 
 
 def test_security_event_rejects_empty_event_type():

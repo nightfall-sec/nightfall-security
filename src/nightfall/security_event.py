@@ -1,6 +1,7 @@
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any
+from uuid import uuid4
 
 
 VALID_SEVERITIES = {
@@ -28,6 +29,7 @@ class SecurityEvent:
         default_factory=lambda: datetime.now(timezone.utc).isoformat()
     )
     metadata: dict[str, Any] = field(default_factory=dict)
+    event_id: str = field(default_factory=lambda: uuid4().hex)
 
     def __post_init__(self):
         if not isinstance(self.event_type, str):
@@ -69,12 +71,21 @@ class SecurityEvent:
         if not isinstance(self.metadata, dict):
             raise TypeError("metadata must be a dictionary")
 
+        if not isinstance(self.event_id, str):
+            raise TypeError("event_id must be a string")
+
+        self.event_id = self.event_id.strip()
+
+        if not self.event_id:
+            raise ValueError("event_id cannot be empty")
+
     def to_dict(self) -> dict[str, Any]:
         """
         Convert the security event to a dictionary.
         """
 
         return {
+            "event_id": self.event_id,
             "event_type": self.event_type,
             "severity": self.severity,
             "source_ip": self.source_ip,
