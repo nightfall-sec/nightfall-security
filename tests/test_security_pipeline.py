@@ -37,3 +37,22 @@ def test_security_pipeline_returns_no_alert_below_threshold():
     assert result["analysis"]["failed_attempts"] == 2
     assert result["detections"] == []
     assert result["alerts"] == []
+
+def test_security_pipeline_generates_unique_analysis_id():
+    logs = [
+        "Failed password for user admin from 192.168.1.10",
+    ]
+
+    result_one = analyze_security_logs(logs, threshold=5)
+    result_two = analyze_security_logs(logs, threshold=5)
+
+    assert "analysis_id" in result_one
+    assert "analysis_id" in result_two
+
+    assert isinstance(result_one["analysis_id"], str)
+    assert isinstance(result_two["analysis_id"], str)
+
+    assert result_one["analysis_id"]
+    assert result_two["analysis_id"]
+
+    assert result_one["analysis_id"] != result_two["analysis_id"]
