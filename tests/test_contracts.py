@@ -440,21 +440,21 @@ def test_security_event_response_decided_requires_alert_id():
     with pytest.raises(ValueError):
         SecurityEvent(
             event_kind=EventKind.RESPONSE_DECIDED,
-            metadata={"response": ResponseAction.LOG.value},
+            response_action=ResponseAction.LOG,
         )
 
 
-def test_security_event_response_decided_requires_response_metadata():
+def test_security_event_response_decided_requires_response_action():
     with pytest.raises(ValueError):
         SecurityEvent(event_kind=EventKind.RESPONSE_DECIDED, alert_id=OTHER_UUID)
 
 
-def test_security_event_response_decided_rejects_invalid_response():
+def test_security_event_response_decided_rejects_invalid_response_action():
     with pytest.raises(ValueError):
         SecurityEvent(
             event_kind=EventKind.RESPONSE_DECIDED,
             alert_id=OTHER_UUID,
-            metadata={"response": "NOT_A_REAL_ACTION"},
+            response_action="NOT_A_REAL_ACTION",
         )
 
 
@@ -462,9 +462,59 @@ def test_security_event_response_decided_valid():
     event = SecurityEvent(
         event_kind=EventKind.RESPONSE_DECIDED,
         alert_id=OTHER_UUID,
-        metadata={"response": ResponseAction.ESCALATE.value},
+        response_action=ResponseAction.ESCALATE,
     )
-    assert event.metadata["response"] == ResponseAction.ESCALATE.value
+    assert event.response_action is ResponseAction.ESCALATE
+    assert "response" not in event.metadata
+
+
+def test_security_event_detection_recorded_rejects_response_action():
+    with pytest.raises(ValueError):
+        SecurityEvent(
+            event_kind=EventKind.DETECTION_RECORDED,
+            detection_id=VALID_UUID,
+            response_action=ResponseAction.LOG,
+        )
+
+
+def test_security_event_alert_created_rejects_response_action():
+    with pytest.raises(ValueError):
+        SecurityEvent(
+            event_kind=EventKind.ALERT_CREATED,
+            detection_id=VALID_UUID,
+            alert_id=OTHER_UUID,
+            response_action=ResponseAction.LOG,
+        )
+
+
+def test_security_event_response_action_serializes_in_to_dict():
+    event = SecurityEvent(
+        event_kind=EventKind.RESPONSE_DECIDED,
+        alert_id=OTHER_UUID,
+        response_action=ResponseAction.ESCALATE,
+    )
+    data = event.to_dict()
+    assert data["response_action"] == "ESCALATE"
+    assert "response" not in data["metadata"]
+
+
+def test_security_event_response_action_none_for_non_response_kinds():
+    event = SecurityEvent(
+        event_kind=EventKind.DETECTION_RECORDED, detection_id=VALID_UUID
+    )
+    assert event.response_action is None
+    assert event.to_dict()["response_action"] is None
+
+
+def test_security_event_response_action_roundtrip_from_dict():
+    event = SecurityEvent(
+        event_kind=EventKind.RESPONSE_DECIDED,
+        alert_id=OTHER_UUID,
+        response_action=ResponseAction.ESCALATE_PRIORITY,
+    )
+    restored = SecurityEvent.from_dict(event.to_dict())
+    assert restored == event
+    assert restored.response_action is ResponseAction.ESCALATE_PRIORITY
 
 
 def test_security_event_is_frozen():
@@ -500,10 +550,11 @@ def test_security_event_json_roundtrip():
     event = SecurityEvent(
         event_kind=EventKind.RESPONSE_DECIDED,
         alert_id=OTHER_UUID,
-        metadata={"response": ResponseAction.FLAG.value},
+        response_action=ResponseAction.FLAG,
     )
     restored = SecurityEvent.from_json(event.to_json())
     assert restored == event
+    assert restored.response_action is ResponseAction.FLAG
 
 
 def test_security_event_rejects_unsupported_schema_version():
@@ -540,7 +591,7 @@ def test_detection_alert_event_relationship_chain():
     decided = SecurityEvent(
         event_kind=EventKind.RESPONSE_DECIDED,
         alert_id=alert.alert_id,
-        metadata={"response": ResponseAction.ESCALATE_PRIORITY.value},
+        response_action=ResponseAction.ESCALATE_PRIORITY,
     )
 
     assert alert.detection_id == detection.detection_id
@@ -548,6 +599,90 @@ def test_detection_alert_event_relationship_chain():
     assert created.detection_id == detection.detection_id
     assert created.alert_id == alert.alert_id
     assert decided.alert_id == alert.alert_id
+
+
+# ---------------------------------------------------------------------------
+# Deep metadata immutability
+# ---------------------------------------------------------------------------
+
+
+def test_detection_metadata_nested_dict_is_read_only():
+    detection = _make_detection(
+        metadata={"context": {"ip_reputation": "bad", "count": 3}}
+    )
+
+    with pytest.raises(TypeError):
+        detection.metadata["context"]["count"] = 99
+
+
+def test_detection_metadata_nested_list_is_immutable():
+    detection = _make_detection(metadata={"tags": ["brute-force", "ssh"]})
+
+    assert isinstance(detection.metadata["tags"], tuple)
+    with pytest.raises(TypeError):
+        detection.metadata["tags"][0] = "changed"
+
+
+def test_security_event_metadata_deeply_nested_structure_is_frozen():
+    event = SecurityEvent(
+        event_kind=EventKind.DETECTION_RECORDED,
+        detection_id=VALID_UUID,
+        metadata={
+            "sources": [
+                {"ip": "10.0.0.1", "flags": ["nat", "vpn"]},
+                {"ip": "10.0.0.2", "flags": []},
+            ]
+        },
+    )
+
+    sources = event.metadata["sources"]
+    assert isinstance(sources, tuple)
+    assert isinstance(sources[0], type(event.metadata))  # MappingProxyType
+    assert isinstance(sources[0]["flags"], tuple)
+
+    with pytest.raises(TypeError):
+        sources[0]["ip"] = "changed"
+    with pytest.raises(TypeError):
+        sources[0]["flags"][0] = "changed"
+
+
+def test_nested_metadata_round_trips_through_to_dict():
+    original_metadata = {
+        "context": {"ip_reputation": "bad", "count": 3},
+        "tags": ["brute-force", "ssh"],
+        "sources": [{"ip": "10.0.0.1", "flags": ["nat", "vpn"]}],
+    }
+    detection = _make_detection(metadata=original_metadata)
+
+    dumped = detection.to_dict()
+
+    # to_dict() output must be plain, mutable, JSON-compatible structures.
+    assert dumped["metadata"] == original_metadata
+    assert isinstance(dumped["metadata"]["tags"], list)
+    assert isinstance(dumped["metadata"]["sources"], list)
+    assert isinstance(dumped["metadata"]["sources"][0], dict)
+    assert isinstance(dumped["metadata"]["sources"][0]["flags"], list)
+
+    # Mutating the dumped dict must not affect the frozen original.
+    dumped["metadata"]["tags"].append("mutated")
+    assert "mutated" not in detection.metadata["tags"]
+
+
+def test_nested_metadata_round_trips_through_from_dict_and_json():
+    original_metadata = {
+        "context": {"ip_reputation": "bad", "count": 3},
+        "tags": ["brute-force", "ssh"],
+    }
+    detection = _make_detection(metadata=original_metadata)
+
+    restored_from_dict = Detection.from_dict(detection.to_dict())
+    assert restored_from_dict == detection
+    assert restored_from_dict.metadata["context"]["count"] == 3
+    assert restored_from_dict.metadata["tags"] == ("brute-force", "ssh")
+
+    restored_from_json = Detection.from_json(detection.to_json())
+    assert restored_from_json == detection
+    assert json.loads(detection.to_json())["metadata"] == original_metadata
 
 
 # ---------------------------------------------------------------------------

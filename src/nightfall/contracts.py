@@ -33,11 +33,13 @@ a given finding. No registry is implemented in this phase.
 Immutability
 ------------
 Every contract in this module is a frozen dataclass. Mutable inputs
-(dicts, lists) are copied and, for the ``metadata`` fields, exposed as
-read-only ``MappingProxyType`` views so that constructed contracts
-cannot be mutated after the fact -- this matters most for
-``SecurityEvent``, which is meant to serve as an immutable audit trail,
-but is applied consistently across all contracts for predictability.
+(dicts, lists) are copied and, for the ``metadata`` fields, deeply
+frozen: nested dicts become read-only ``MappingProxyType`` views and
+nested lists become tuples, recursively, so no part of a constructed
+contract's metadata can be mutated after the fact -- this matters most
+for ``SecurityEvent``, which is meant to serve as an immutable audit
+trail, but is applied consistently across all contracts for
+predictability.
 
 Serialization
 --------------
@@ -266,6 +268,43 @@ def _ensure_json_safe(value: Any, path: str) -> None:
     raise TypeError(f"{path} must be JSON-safe (got {type(value).__name__})")
 
 
+def _deep_freeze(value: Any) -> Any:
+    """
+    Recursively convert a JSON-safe value into an immutable structure.
+
+    ``dict`` -> ``MappingProxyType`` (with every nested value frozen).
+    ``list``/``tuple`` -> ``tuple`` (with every nested value frozen).
+    Everything else (``str``, ``int``, ``float``, ``bool``, ``None``) is
+    already immutable and is returned unchanged.
+    """
+
+    if isinstance(value, Mapping):
+        return MappingProxyType(
+            {key: _deep_freeze(item) for key, item in value.items()}
+        )
+
+    if isinstance(value, (list, tuple)):
+        return tuple(_deep_freeze(item) for item in value)
+
+    return value
+
+
+def _deep_thaw(value: Any) -> Any:
+    """
+    Recursively convert a frozen structure (as produced by
+    :func:`_deep_freeze`) back into plain, JSON-compatible ``dict``/
+    ``list`` structures suitable for ``json.dumps``.
+    """
+
+    if isinstance(value, Mapping):
+        return {key: _deep_thaw(item) for key, item in value.items()}
+
+    if isinstance(value, tuple):
+        return [_deep_thaw(item) for item in value]
+
+    return value
+
+
 def _freeze_metadata(metadata: Any, field_name: str) -> Mapping[str, Any]:
     if metadata is None:
         metadata = {}
@@ -276,7 +315,7 @@ def _freeze_metadata(metadata: Any, field_name: str) -> Mapping[str, Any]:
     snapshot = dict(metadata)
     _ensure_json_safe(snapshot, field_name)
 
-    return MappingProxyType(snapshot)
+    return _deep_freeze(snapshot)
 
 
 def _validate_schema_version(value: Any) -> str:
@@ -434,7 +473,7 @@ class EvidenceItem:
             "reference": self.reference,
             "source": self.source.to_dict() if self.source is not None else None,
             "observed_at": self.observed_at,
-            "metadata": dict(self.metadata),
+            "metadata": _deep_thaw(self.metadata),
         }
 
     @classmethod
@@ -546,7 +585,7 @@ class Detection:
                 self.time_window.to_dict() if self.time_window is not None else None
             ),
             "evidence": [item.to_dict() for item in self.evidence],
-            "metadata": dict(self.metadata),
+            "metadata": _deep_thaw(self.metadata),
         }
 
     def to_json(self) -> str:
@@ -642,7 +681,7 @@ class Alert:
             "severity": self.severity.value,
             "description": self.description,
             "created_at": self.created_at,
-            "metadata": dict(self.metadata),
+            "metadata": _deep_thaw(self.metadata),
         }
 
     def to_json(self) -> str:
@@ -690,14 +729,14 @@ class SecurityEvent:
 
     Validation is applied per ``event_kind``:
 
-    - ``DETECTION_RECORDED`` requires ``detection_id`` and must not
-      reference ``alert_id`` (no alert exists yet at this stage).
+    - ``DETECTION_RECORDED`` requires ``detection_id``, must not
+      reference ``alert_id`` (no alert exists yet at this stage), and
+      must not carry a ``response_action``.
     - ``ALERT_CREATED`` requires both ``detection_id`` and
       ``alert_id``, recording that an alert was derived from a
-      detection.
-    - ``RESPONSE_DECIDED`` requires ``alert_id`` and a ``"response"``
-      entry in ``metadata`` whose value is a valid
-      :class:`ResponseAction`.
+      detection, and must not carry a ``response_action``.
+    - ``RESPONSE_DECIDED`` requires ``alert_id`` and a typed
+      ``response_action`` (a :class:`ResponseAction`).
 
     This type is distinct from ``nightfall.security_event.SecurityEvent``
     (the existing pipeline event model), which is unmodified.
@@ -708,6 +747,7 @@ class SecurityEvent:
     occurred_at: str = field(default_factory=_default_timestamp)
     detection_id: str | None = None
     alert_id: str | None = None
+    response_action: ResponseAction | None = None
     metadata: Mapping[str, Any] = field(default_factory=dict)
     schema_version: str = SCHEMA_VERSION
 
@@ -726,17 +766,23 @@ class SecurityEvent:
             if self.alert_id is not None
             else None
         )
+        response_action = (
+            _coerce_enum(self.response_action, ResponseAction, "response_action")
+            if self.response_action is not None
+            else None
+        )
 
         metadata = _freeze_metadata(self.metadata, "event.metadata")
         schema_version = _validate_schema_version(self.schema_version)
 
-        self._validate_for_kind(event_kind, detection_id, alert_id, metadata)
+        self._validate_for_kind(event_kind, detection_id, alert_id, response_action)
 
         object.__setattr__(self, "event_id", event_id)
         object.__setattr__(self, "event_kind", event_kind)
         object.__setattr__(self, "occurred_at", occurred_at)
         object.__setattr__(self, "detection_id", detection_id)
         object.__setattr__(self, "alert_id", alert_id)
+        object.__setattr__(self, "response_action", response_action)
         object.__setattr__(self, "metadata", metadata)
         object.__setattr__(self, "schema_version", schema_version)
 
@@ -745,7 +791,7 @@ class SecurityEvent:
         event_kind: EventKind,
         detection_id: str | None,
         alert_id: str | None,
-        metadata: Mapping[str, Any],
+        response_action: ResponseAction | None,
     ) -> None:
         if event_kind is EventKind.DETECTION_RECORDED:
             if detection_id is None:
@@ -756,6 +802,10 @@ class SecurityEvent:
                 raise ValueError(
                     "DETECTION_RECORDED events must not reference alert_id"
                 )
+            if response_action is not None:
+                raise ValueError(
+                    "DETECTION_RECORDED events must not set response_action"
+                )
             return
 
         if event_kind is EventKind.ALERT_CREATED:
@@ -763,26 +813,19 @@ class SecurityEvent:
                 raise ValueError("ALERT_CREATED events require detection_id")
             if alert_id is None:
                 raise ValueError("ALERT_CREATED events require alert_id")
+            if response_action is not None:
+                raise ValueError(
+                    "ALERT_CREATED events must not set response_action"
+                )
             return
 
         if event_kind is EventKind.RESPONSE_DECIDED:
             if alert_id is None:
                 raise ValueError("RESPONSE_DECIDED events require alert_id")
-
-            response = metadata.get("response")
-
-            if response is None:
+            if response_action is None:
                 raise ValueError(
-                    "RESPONSE_DECIDED events require a 'response' "
-                    "metadata entry"
+                    "RESPONSE_DECIDED events require response_action"
                 )
-
-            try:
-                ResponseAction(response)
-            except ValueError as exc:
-                valid = ", ".join(member.value for member in ResponseAction)
-                raise ValueError(f"response must be one of: {valid}") from exc
-
             return
 
         raise ValueError(f"unsupported event_kind: {event_kind}")
@@ -795,7 +838,12 @@ class SecurityEvent:
             "occurred_at": self.occurred_at,
             "detection_id": self.detection_id,
             "alert_id": self.alert_id,
-            "metadata": dict(self.metadata),
+            "response_action": (
+                self.response_action.value
+                if self.response_action is not None
+                else None
+            ),
+            "metadata": _deep_thaw(self.metadata),
         }
 
     def to_json(self) -> str:
@@ -810,6 +858,7 @@ class SecurityEvent:
             "event_kind": data.get("event_kind"),
             "detection_id": data.get("detection_id"),
             "alert_id": data.get("alert_id"),
+            "response_action": data.get("response_action"),
             "metadata": data.get("metadata") or {},
         }
 
