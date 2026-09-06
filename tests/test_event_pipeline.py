@@ -1,3 +1,5 @@
+import uuid
+
 from src.nightfall.config import NightfallConfig
 from src.nightfall.event_pipeline import process_logs
 
@@ -93,3 +95,101 @@ def test_event_pipeline_uses_configuration_threshold():
     assert len(result["detections"]) == 1
     assert result["detections"][0]["ip"] == "192.168.1.10"
     assert result["detections"][0]["failed_attempts"] == 4
+
+
+# ---------------------------------------------------------------------------
+# run_id (correlation identifier)
+# ---------------------------------------------------------------------------
+
+
+def test_event_pipeline_run_id_exists():
+    logs = [
+        "Failed password for user admin from 192.168.1.10",
+        "Failed password for user root from 192.168.1.10",
+        "Failed password for user test from 192.168.1.10",
+    ]
+
+    result = process_logs(logs, threshold=3)
+
+    assert "run_id" in result
+    assert isinstance(result["run_id"], str)
+    assert result["run_id"]
+
+
+def test_event_pipeline_run_id_is_valid_uuid4():
+    logs = [
+        "Failed password for user admin from 192.168.1.10",
+        "Failed password for user root from 192.168.1.10",
+        "Failed password for user test from 192.168.1.10",
+    ]
+
+    result = process_logs(logs, threshold=3)
+
+    parsed = uuid.UUID(result["run_id"])
+    assert parsed.version == 4
+
+
+def test_event_pipeline_all_events_share_same_run_id():
+    logs = [
+        "Failed password for user admin from 192.168.1.10",
+        "Failed password for user root from 192.168.1.10",
+        "Failed password for user test from 192.168.1.10",
+        "Failed password for user admin from 10.0.0.5",
+        "Failed password for user root from 10.0.0.5",
+        "Failed password for user test from 10.0.0.5",
+    ]
+
+    result = process_logs(logs, threshold=3)
+
+    assert len(result["events"]) >= 2
+
+    for event in result["events"]:
+        assert event.metadata["run_id"] == result["run_id"]
+
+
+def test_event_pipeline_separate_executions_get_different_run_ids():
+    logs = [
+        "Failed password for user admin from 192.168.1.10",
+        "Failed password for user root from 192.168.1.10",
+        "Failed password for user test from 192.168.1.10",
+    ]
+
+    first = process_logs(logs, threshold=3)
+    second = process_logs(logs, threshold=3)
+
+    assert first["run_id"] != second["run_id"]
+
+
+def test_event_pipeline_existing_behavior_unchanged_alongside_run_id():
+    logs = [
+        "Failed password for user admin from 10.0.0.5",
+        "Failed password for user root from 10.0.0.5",
+        "Failed password for user test from 10.0.0.5",
+        "Accepted password for user nightfall from 192.168.1.20",
+    ]
+
+    result = process_logs(logs, threshold=3)
+
+    # Existing keys/values are preserved exactly as before.
+    assert set(result.keys()) == {
+        "run_id",
+        "analysis",
+        "detections",
+        "alerts",
+        "events",
+    }
+    assert result["analysis"]["failed_attempts"] == 3
+    assert len(result["detections"]) == 1
+    assert result["detections"][0]["type"] == "BRUTE_FORCE"
+    assert len(result["alerts"]) == 1
+    assert result["alerts"][0]["source_ip"] == "10.0.0.5"
+    assert result["alerts"][0]["severity"] == "HIGH"
+
+    event = result["events"][0]
+    assert event.event_type == "BRUTE_FORCE"
+    assert event.severity == "HIGH"
+    assert event.source_ip == "10.0.0.5"
+    assert event.metadata["failed_attempts"] == 3
+    assert event.metadata["response"] == "ESCALATE"
+    # run_id is an addition, not a replacement, of existing metadata keys.
+    assert "run_id" in event.metadata
