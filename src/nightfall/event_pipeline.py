@@ -1,3 +1,5 @@
+import uuid
+
 from .alert_engine import build_alerts
 from .config import NightfallConfig
 from .incident_response import process_alert
@@ -21,6 +23,12 @@ def process_logs(log_lines, config=None, threshold=None):
 
     A NightfallConfig object can be supplied to centralize
     security settings.
+
+    Every execution generates exactly one UUID4 correlation
+    identifier (``run_id``), returned in the result and stamped
+    into the metadata of every legacy ``SecurityEvent`` produced
+    by this run, so that events from the same execution can be
+    correlated with each other.
     """
 
     if config is None:
@@ -31,6 +39,8 @@ def process_logs(log_lines, config=None, threshold=None):
 
     if threshold is None:
         threshold = config.brute_force_threshold
+
+    run_id = str(uuid.uuid4())
 
     analysis = analyze_logs(log_lines)
 
@@ -54,12 +64,14 @@ def process_logs(log_lines, config=None, threshold=None):
                 "failed_attempts": processed_alert["failed_attempts"],
                 "description": processed_alert["description"],
                 "response": processed_alert["response"],
+                "run_id": run_id,
             },
         )
 
         events.append(event)
 
     return {
+        "run_id": run_id,
         "analysis": analysis,
         "detections": detections,
         "alerts": alerts,
